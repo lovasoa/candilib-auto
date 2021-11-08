@@ -4,12 +4,11 @@ const { google } = require('googleapis');
 const jwt_decode = require("jwt-decode");
 const uuid = require("uuid");
 
+require('dotenv').config()
+
 // If modifying these scopes, delete token.json.
 const SCOPES = ['https://www.googleapis.com/auth/gmail.readonly'];
-// The file token.json stores the user's access and refresh tokens, and is
-// created automatically when the authorization flow completes for the first
-// time.
-const TOKEN_PATH = 'token.json';
+
 const CANDILIB_URL = 'https://beta.interieur.gouv.fr/candilib'
 const CANDILIB_HEADERS = {
     "Content-Type": "application/json",
@@ -21,7 +20,7 @@ const CENTRES_EXAM_PREFERES = ["94", "93", "92"];
 
 async function main() {
     // Load client secrets from a local file.
-    const credentials = JSON.parse(await fs.promises.readFile('credentials.json'));
+    const credentials = JSON.parse(process.env.CREDENTIALS);
     // Authorize a client with credentials, then call the Gmail API.
     const auth = await authorize(credentials);
     let token = await findTokenInMail(auth);
@@ -56,11 +55,7 @@ async function authorize(credentials) {
     const { client_secret, client_id, redirect_uris } = credentials.installed;
     const oAuth2Client = new google.auth.OAuth2(
         client_id, client_secret, redirect_uris[0]);
-
-    // Check if we have previously stored a token.
-    const token = await fs.promises.readFile(TOKEN_PATH);
-
-    oAuth2Client.setCredentials(JSON.parse(token));
+    oAuth2Client.setCredentials(JSON.parse(process.env.TOKEN));
     return oAuth2Client
 }
 
