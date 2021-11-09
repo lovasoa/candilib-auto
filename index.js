@@ -1,13 +1,16 @@
-const fs = require('fs');
 const fetch = require('node-fetch');
 const { google } = require('googleapis');
 const jwt_decode = require("jwt-decode");
 const uuid = require("uuid");
+const readline = require("readline");
 
 require('dotenv').config()
 
 // If modifying these scopes, delete token.json.
-const SCOPES = ['https://www.googleapis.com/auth/gmail.readonly'];
+const SCOPES = [
+    'https://www.googleapis.com/auth/gmail.readonly',
+    'https://www.googleapis.com/auth/gmail.send'
+];
 
 const CANDILIB_URL = 'https://beta.interieur.gouv.fr/candilib'
 const CANDILIB_HEADERS = {
@@ -19,6 +22,11 @@ const CANDILIB_HEADERS = {
 const CENTRES_EXAM_PREFERES = ["94", "93", "92"];
 
 async function main() {
+    if (!process.env.CREDENTIALS) {
+        console.log("variables d'environnement CREDENTIALS manquante");
+        process.exit(1);
+    }
+
     // Load client secrets from a local file.
     const credentials = JSON.parse(process.env.CREDENTIALS);
     // Authorize a client with credentials, then call the Gmail API.
@@ -37,13 +45,18 @@ async function main() {
         "X-USER-ID": decoded_token.id,
         "Authorization": "Bearer " + token
     }
+    /** @type {Centre[]}*/
+    const centres = [];
     let total = 0;
     for await (const { count, centre } of examCentres(identified_headers)) {
         console.log(`${count} places à ${centre.nom} (${centre.geoDepartement})`);
+        centres.push(centre);
         total += count;
     }
     console.log(`${total} places disponibles.`);
     if (total === 0) console.log("Évidemment :'(");
+    await sendMail(auth, token, centres);
+    console.log("Fini.");
 }
 
 /**
@@ -55,8 +68,27 @@ async function authorize(credentials) {
     const { client_secret, client_id, redirect_uris } = credentials.installed;
     const oAuth2Client = new google.auth.OAuth2(
         client_id, client_secret, redirect_uris[0]);
-    oAuth2Client.setCredentials(JSON.parse(process.env.TOKEN));
+    if (!process.env.TOKEN) await missingGoogleToken(oAuth2Client);
+    const token_json = JSON.parse(process.env.TOKEN);
+    const scopes = token_json.scope.split(' ');
+    if (!SCOPES.every(s => scopes.includes(s))) await missingGoogleToken(oAuth2Client);
+    oAuth2Client.setCredentials(token_json);
     return oAuth2Client
+}
+
+/**
+ * 
+ * @param {import("google-auth-library").OAuth2Client} oAuth2Client
+ */
+async function missingGoogleToken(oAuth2Client) {
+    const url = oAuth2Client.generateAuthUrl({ access_type: 'offline', scope: SCOPES, });
+    console.log(`Vous pouvez maintenant vous connecter à votre compte Google avec le lien suivant : ${url}`);
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    const code = await new Promise(a => rl.question('Please paste the authentication code: ', a));
+    const { tokens } = await oAuth2Client.getToken(code);
+    console.log(`\nToken reçu, ajoutez la variable d'environnement\n\nTOKEN='${JSON.stringify(tokens)}'`);
+    oAuth2Client.setCredentials(tokens);
+    process.exit(1);
 }
 
 async function sleep(time_ms) {
@@ -66,7 +98,7 @@ async function sleep(time_ms) {
 /**
  * Trouve le dernier mail de candilib
  *
- * @param {google.auth.OAuth2} auth An authorized OAuth2 client.
+ * @param {OAuth2Client} auth An authorized OAuth2 client.
  */
 async function findTokenInMail(auth) {
     console.log("Recherche d'un mail de candilib");
@@ -101,7 +133,7 @@ async function sendCandilibEmail() {
         "body": JSON.stringify({ "email": "pere.jobs+permis@gmail.com" }),
         "method": "POST",
     });
-    if (!r.status !== 200) {
+    if (r.status !== 200) {
         console.log("Erreur lors de l'envoi de l'email de candidilib");
         throw new Error("erreur candilib: " + await r.text())
     }
@@ -158,6 +190,55 @@ async function centresInDept(headers, dept) {
     const req_centres = await fetch(centres_url, { headers });
     if (req_centres.status !== 200) throw new Error("erreur candilib: " + await req_centres.text());
     return await req_centres.json();
+}
+
+/**
+ * Envoi un mail avec les résultats
+ *
+ * @param {import('google-auth-library').OAuth2Client} auth An authorized OAuth2 client.
+ * @param {string} token
+ * @param {Centre[]} centres
+ */
+async function sendMail(auth, token, centres) {
+    const gmail = google.gmail({ version: 'v1', auth });
+    const my_profile = await gmail.users.getProfile({ userId: 'me' });
+    const me = my_profile.data.emailAddress;
+    const total = centres.length;
+    const subject = `[${new Date().toISOString().split('T')[0]}] ${total} places disponibles`;
+    const info_centres = centres.length
+        ? `Les centres suivants ont des places : <ul>\n${centres.map(c => (
+            `  <li>`
+            + `  <a href="${CANDILIB_URL}/candidat/${c.geoDepartement}/${c.nom}/undefinedMonth/undefinedDay/selection/selection-place?token=${token}">`
+            + `    ${c.nom} (${c.geoDepartement})`
+            + `  </a>`
+            + `</li>`)
+        )
+            .join('\n')
+        }</ul>`
+        : `<p>Aucun centre n'a de place</p>`;
+    const body = `${info_centres}\n\n Connectez-vous sur ${CANDILIB_URL}/candidat?token=${token}`;
+    console.log(`Envoi du mail à ${me}`);
+    await gmail.users.messages.send({
+        userId: 'me',
+        requestBody: {
+            raw: makeBody(me, me, subject, body),
+        }
+    });
+}
+
+function makeBody(to, from, subject, message) {
+    var str = [
+        "Content-Type: text/html; charset=\"UTF-8\"\n",
+        "MIME-Version: 1.0\n",
+        "Content-Transfer-Encoding: 7bit\n",
+        "to: ", to, "\n",
+        "from: ", from, "\n",
+        "subject: ", subject, "\n\n",
+        message
+    ].join('');
+
+    var encodedMail = Buffer.from(str).toString("base64").replace(/\+/g, '-').replace(/\//g, '_');
+    return encodedMail;
 }
 
 main()
