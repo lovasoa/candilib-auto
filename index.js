@@ -5,6 +5,7 @@ const uuid = require("uuid");
 const readline = require("readline");
 
 require('dotenv').config()
+process.env.TZ = "Europe/Paris"; // Les temps candilib sont en heure française
 
 // If modifying these scopes, delete token.json.
 const SCOPES = [
@@ -45,18 +46,25 @@ async function main() {
         "X-USER-ID": decoded_token.id,
         "Authorization": "Bearer " + token
     }
-    /** @type {Centre[]}*/
-    const centres = [];
-    let total = 0;
-    for await (const { count, centre } of examCentres(identified_headers)) {
-        console.log(`${count} places à ${centre.nom} (${centre.geoDepartement})`);
-        centres.push(centre);
-        total += count;
-    }
-    console.log(`${total} places disponibles.`);
-    if (total === 0) console.log("Évidemment :'(");
+    const depts = await examCentresDepartements(identified_headers);
+    await attendreCreneau(decoded_token);
+    const centres = await getCentres(depts, identified_headers);
+    console.log(`${centres.length} centres avec des places disponibles.`);
+    if (!centres.length) console.log("Évidemment :'(");
     await sendMail(auth, token, centres);
     console.log("Fini.");
+}
+
+async function attendreCreneau(decoded_token) {
+    const date = new Date();
+    date.setHours(12);
+    date.setMinutes(10 * decoded_token.candidatStatus);
+    date.setSeconds(0);
+    date.setMilliseconds(0);
+    const sleepTime = date.getTime() - Date.now();
+    if (sleepTime < 0) return;
+    console.log(`Sleeping ${(sleepTime / 1000).toFixed()} seconds until ${date.toLocaleString()}`);
+    await sleep(sleepTime);
 }
 
 /**
@@ -149,23 +157,37 @@ async function sendCandilibEmail() {
 /**
  * 
  * @param {Object} headers 
+ * @returns {Promise<string[]>}
  */
-async function* examCentres(headers) {
+async function examCentresDepartements(headers) {
     const r = await fetch(CANDILIB_URL + "/api/v2/candidat/departements", { headers });
     if (r.status !== 200) throw new Error("erreur candilib: " + await r.text());
     const j = await r.json();
     if (!j.success) throw new Error(JSON.stringify(j));
-    const centres = j.geoDepartementsInfos.map(d => d.geoDepartement);
-    const centres_ordered = [
-        ...CENTRES_EXAM_PREFERES.filter(c => centres.includes(c)),
-        ...centres.filter(c => !CENTRES_EXAM_PREFERES.includes(c))
+    const depts = j.geoDepartementsInfos.map(d => d.geoDepartement);
+    const depts_ordered = [
+        ...CENTRES_EXAM_PREFERES.filter(c => depts.includes(c)),
+        ...depts.filter(c => !CENTRES_EXAM_PREFERES.includes(c))
     ];
-    for (c of centres_ordered) {
-        for (const centre of await centresInDept(headers, c)) {
-            yield centre;
+    return depts_ordered
+}
+
+/**
+ * 
+ * @param {string[]} depts 
+ * @param {Object} identified_headers 
+ * @returns {Promise<Centre[]>}
+ */
+async function getCentres(depts, identified_headers) {
+    const result = [];
+    for (const dept of depts) {
+        for (const { count, centre } of await centresInDept(identified_headers, dept)) {
+            if (count > 0) result.push(centre);
+            console.log(`${count} places disponibles à ${centre.nom} (${dept})`);
         }
-        await sleep(300);
+        await sleep(200);
     }
+    return result
 }
 
 /**
@@ -204,9 +226,10 @@ async function sendMail(auth, token, centres) {
     const my_profile = await gmail.users.getProfile({ userId: 'me' });
     const me = my_profile.data.emailAddress;
     const total = centres.length;
-    const subject = `[${new Date().toISOString().split('T')[0]}] ${total} places disponibles`;
-    const info_centres = centres.length
-        ? `Les centres suivants ont des places : <ul>\n${centres.map(c => (
+    const subject = `[${new Date().toISOString().split('T')[0]}] ${total} places disponibles sur candilib`;
+    const body = centres.length
+        ? `<p>
+            Les centres suivants ont des places : <ul>\n${centres.map(c => (
             `  <li>`
             + `  <a href="${CANDILIB_URL}/candidat/${c.geoDepartement}/${c.nom}/undefinedMonth/undefinedDay/selection/selection-place?token=${token}">`
             + `    ${c.nom} (${c.geoDepartement})`
@@ -214,9 +237,13 @@ async function sendMail(auth, token, centres) {
             + `</li>`)
         )
             .join('\n')
-        }</ul>`
-        : `<p>Aucun centre n'a de place</p>`;
-    const body = `${info_centres}\n\n Connectez-vous sur ${CANDILIB_URL}/candidat?token=${token}`;
+        }</ul>
+        </p>
+
+        <p>
+         <a href="${CANDILIB_URL}/candidat?token=${token}">Interface principale de candilib.</a>
+        </p>`
+        : `<p>Aucun centre n'a de place.</p>`;
     console.log(`Envoi du mail à ${me}`);
     await gmail.users.messages.send({
         userId: 'me',
