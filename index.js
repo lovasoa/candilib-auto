@@ -268,4 +268,7 @@ function makeBody(to, from, subject, message) {
     return encodedMail;
 }
 
-main()
+main().catch(e => {
+    console.error(e);
+    process.exit(1);
+});
