@@ -20,7 +20,7 @@ const CANDILIB_HEADERS = {
     "X-CLIENT-ID": uuid.v4(), // Pas la peine de mettre une version. Bug bien pratique : https://github.com/LAB-MI/candilibV2/blob/master/server/src/routes/middlewares/verify-user.js#L18 
 };
 
-const CENTRES_EXAM_PREFERES = ["94", "93", "92"];
+const CENTRES_EXAM_PREFERES = ["94", "93", "92", "95", "91", "78", "77"];
 
 async function main() {
     if (!process.env.CREDENTIALS) {
