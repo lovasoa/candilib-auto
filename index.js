@@ -58,7 +58,11 @@ async function main() {
 async function attendreCreneau(decoded_token) {
     const date = new Date();
     date.setHours(12);
-    date.setMinutes(10 * decoded_token.candidatStatus);
+    date.setMinutes(
+        decoded_token.isInRecentlyDept
+        ? 0
+        : 10 * decoded_token.candidatStatus
+    );
     date.setSeconds(0);
     date.setMilliseconds(0);
     const sleepTime = date.getTime() - Date.now();
