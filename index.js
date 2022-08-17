@@ -95,8 +95,11 @@ async function authorize(credentials) {
 async function missingGoogleToken(oAuth2Client) {
     const url = oAuth2Client.generateAuthUrl({ access_type: 'offline', scope: SCOPES, });
     console.log(`Vous pouvez maintenant vous connecter à votre compte Google avec le lien suivant : ${url}`);
-    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-    const code = await new Promise(a => rl.question('Please paste the authentication code: ', a));
+    const code = await new Promise((a,r) => {
+        const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+        rl.question('Please paste the authentication code: ', a);
+        rl.on('close', r);
+    });
     const { tokens } = await oAuth2Client.getToken(code);
     console.log(`\nToken reçu, ajoutez la variable d'environnement TOKEN: \n${JSON.stringify(tokens)}\n`);
     oAuth2Client.setCredentials(tokens);
