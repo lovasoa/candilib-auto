@@ -98,7 +98,7 @@ async function missingGoogleToken(oAuth2Client) {
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
     const code = await new Promise(a => rl.question('Please paste the authentication code: ', a));
     const { tokens } = await oAuth2Client.getToken(code);
-    console.log(`\nToken reçu, ajoutez la variable d'environnement\n\nTOKEN='${JSON.stringify(tokens)}'`);
+    console.log(`\nToken reçu, ajoutez la variable d'environnement TOKEN: \n${JSON.stringify(tokens)}\n`);
     oAuth2Client.setCredentials(tokens);
     process.exit(1);
 }
@@ -113,8 +113,8 @@ async function sleep(time_ms) {
  * @param {OAuth2Client} auth An authorized OAuth2 client.
  */
 async function findTokenInMail(auth) {
-    console.log("Recherche d'un mail de candilib");
     const gmail = google.gmail({ version: 'v1', auth });
+    console.log("Recherche d'un mail de candilib");
     const response = await gmail.users.messages.list({
         userId: 'me',
         q: [
@@ -123,6 +123,9 @@ async function findTokenInMail(auth) {
             'after:' + (new Date()).toISOString().split('T')[0]
         ].join(' '),
         maxResults: 1,
+    }).catch(err => {
+        if (err?.response?.data?.error === "invalid_grant") return missingGoogleToken(auth);
+        throw err
     });
     if (response.data.resultSizeEstimate === 0) {
         console.log('Aucun message de candilib trouvé');
